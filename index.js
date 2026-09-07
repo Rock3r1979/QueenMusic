@@ -1,3 +1,7 @@
+// QueenMusic Bridge — convierte un video de YouTube en una URL de audio directa
+// usando yt-dlp. Suficiente y solo para reproducir:
+//   GET /streams/<videoId>   ->  { ok: true, url: "<https mp4/webm audo>" }
+//   GET /healthz             ->  { ok: true }
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +17,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const FORMAT = 'bestaudio[protocol^=http]/bestaudio/best';
 const PLAYER_CLIENTS = ['', 'youtube:player_client=android', 'youtube:player_client=ios'];
+
+const COOKIES_B64 = process.env.COOKIES_B64 || '';
+const COOKIES_TXT = process.env.COOKIES_TXT || '';
+
+let activeCookiesFile = null;
+
+function materializeCookies() {
+  if (!COOKIES_B64 && !COOKIES_TXT) return null;
+  const file = path.join(__dirname, 'cookies.txt');
+  try {
+    if (COOKIES_B64) fs.writeFileSync(file, Buffer.from(COOKIES_B64, 'base64').toString('utf8'));
+    else if (COOKIES_TXT) fs.writeFileSync(file, COOKIES_TXT);
+    console.log('Cookies de YouTube preparadas:', file);
+    return file;
+  } catch (err) {
+    console.warn('No se pudo escribir cookies.txt:', err.message);
+    return null;
+  }
+}
 
 function packageBinDir() {
   const pkgPath = require.resolve('youtube-dl-exec/package.json');
@@ -61,6 +84,7 @@ async function extractAudioUrl(videoId) {
   for (const client of PLAYER_CLIENTS) {
     const opts = { getUrl: true, noPlaylist: true, noWarnings: true, format: FORMAT };
     if (client) opts.extractorArgs = client;
+    if (activeCookiesFile) opts.cookies = activeCookiesFile;
     try {
       const out = await youtubedl(url, opts);
       const clean = String(out).trim().split(/\r?\n/).filter(Boolean).pop();
@@ -109,6 +133,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
   console.log(`queenmusic-bridge escuchando en :${PORT}`);
+  activeCookiesFile = materializeCookies();
   try {
     await ensureBinary();
   } catch (err) {

@@ -6,7 +6,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -61,17 +60,8 @@ async function downloadBinary(binPath) {
 
 async function ensureBinary() {
   const binPath = path.join(packageBinDir(), binaryName());
-  if (fs.existsSync(binPath)) {
-    try {
-      await new Promise((resolve, reject) =>
-        execFile(binPath, ['--version'], (err) => (err ? reject(err) : resolve()))
-      );
-      console.log(`yt-dlp OK: ${binPath}`);
-      return;
-    } catch (err) {
-      console.warn('Binario presente pero no ejecutable, se descargará de nuevo.');
-    }
-  }
+  // Descargamos siempre la última versión: el binario que empaqueta el paquete
+  // se queda obsoleto pronto y YouTube rompe la extracción.
   await downloadBinary(binPath);
 }
 
@@ -82,7 +72,12 @@ async function extractAudioUrl(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   let lastError = null;
   for (const client of PLAYER_CLIENTS) {
-    const opts = { getUrl: true, noPlaylist: true, noWarnings: true, format: FORMAT };
+    const opts = {
+      getUrl: true,
+      noPlaylist: true,
+      noWarnings: true,
+      format: FORMAT,
+    };
     if (client) opts.extractorArgs = client;
     if (activeCookiesFile) opts.cookies = activeCookiesFile;
     try {
@@ -110,20 +105,25 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     if (req.method === 'OPTIONS') return json(res, 204, {});
+
     if (url.pathname === '/' || url.pathname === '/healthz') {
       return json(res, 200, { ok: true, service: 'queenmusic-bridge' });
     }
+
     if (url.pathname === '/streams' || url.pathname.startsWith('/streams/')) {
       const videoId = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
       if (!/^[\w-]{6,}/.test(videoId)) return json(res, 400, { ok: false, error: 'videoId inválido' });
+
       const cached = cache.get(videoId);
       if (cached && Date.now() - cached.at < CACHE_TTL) {
         return json(res, 200, { ok: true, url: cached.url, cached: true });
       }
+
       const extracted = await extractAudioUrl(videoId);
       cache.set(videoId, { url: extracted, at: Date.now() });
       return json(res, 200, { ok: true, url: extracted });
     }
+
     return json(res, 404, { ok: false, error: 'Ruta no encontrada' });
   } catch (err) {
     console.error('[bridge]', err && err.message ? err.message : err);

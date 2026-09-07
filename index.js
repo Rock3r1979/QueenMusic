@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -15,7 +16,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 3000;
 const FORMAT = 'bestaudio[protocol^=http]/bestaudio/best';
-const PLAYER_CLIENTS = ['', 'youtube:player_client=android', 'youtube:player_client=ios'];
+const PLAYER_CLIENTS = [
+  '',
+  'youtube:player_client=web_safari',
+  'youtube:player_client=ios',
+  'youtube:player_client=android',
+  'youtube:player_client=mweb',
+  'youtube:player_client=tv',
+  'youtube:player_client=tv_embedded',
+];
+
+let ytdlpVersion = null;
 
 const COOKIES_B64 = process.env.COOKIES_B64 || '';
 const COOKIES_TXT = process.env.COOKIES_TXT || '';
@@ -60,9 +71,18 @@ async function downloadBinary(binPath) {
 
 async function ensureBinary() {
   const binPath = path.join(packageBinDir(), binaryName());
-  // Descargamos siempre la última versión: el binario que empaqueta el paquete
+  // Descargamos siempre la última versión: el binario empaqueta el paquete
   // se queda obsoleto pronto y YouTube rompe la extracción.
   await downloadBinary(binPath);
+  try {
+    const version = await new Promise((resolve, reject) =>
+      execFile(binPath, ['--version'], (err, stdout) => (err ? reject(err) : resolve(stdout.trim())))
+    );
+    ytdlpVersion = version;
+    console.log(`yt-dlp versión: ${version}`);
+  } catch (err) {
+    console.warn('No se pudo leer la versión de yt-dlp:', err.message);
+  }
 }
 
 const CACHE_TTL = 3 * 60 * 60 * 1000;
@@ -107,7 +127,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return json(res, 204, {});
 
     if (url.pathname === '/' || url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, service: 'queenmusic-bridge' });
+      return json(res, 200, { ok: true, service: 'queenmusic-bridge', ytdlp: ytdlpVersion });
     }
 
     if (url.pathname === '/streams' || url.pathname.startsWith('/streams/')) {
